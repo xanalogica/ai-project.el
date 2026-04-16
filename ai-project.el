@@ -40,6 +40,11 @@
 
 ;;; Code:
 
+;; Optional dependency: vterm (silence warnings by Emacs native compiler)
+(declare-function vterm "vterm" (&optional buffer-name))
+(declare-function vterm-send-string "vterm" (string))
+(declare-function vterm-send-return "vterm" ())
+
 (require 'project)
 (require 'auth-source)
 (require 'subr-x)
@@ -294,14 +299,19 @@ Otherwise recreate the buffer."
      (t
       (when existing
         (ai-project--kill-buffer-if-live existing))
-      (vterm bufname)
+      ;; 🔑 IMPORTANT: let vterm start the shell itself
+      (let ((vterm-shell command))
+        (vterm bufname))
       (with-current-buffer bufname
         (setq-local ai-project--signature signature)
         (setq-local ai-project--tool tool)
         (setq-local ai-project--project-key (ai-project-key))
         (setq-local ai-project--command command))
-      (vterm-send-string command)
-      (vterm-send-return)))))
+
+      ;; 🔑 ONLY send command for non-shell tools
+      (unless (eq tool 'shell)
+        (vterm-send-string command)
+        (vterm-send-return))))))
 
 (defun ai-project-shell ()
   "Launch a plain shell in the current project.

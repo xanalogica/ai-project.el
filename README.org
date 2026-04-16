@@ -132,7 +132,7 @@ Use =.dir-locals.el= to define project identity and tool behavior.
 Example:
 
 #+BEGIN_SRC emacs-lisp
-((nil . ((ai-project-llm-project-key . "TheConductor")
+((nil . ((ai-project-llm-project-key . "TheAccountant")
          (ai-project-claude-args . "--model claude-sonnet-4")
          (ai-project-codex-args . "--model gpt-5-codex"))))
 #+END_SRC
@@ -152,8 +152,8 @@ Store secrets in:
 Example:
 
 #+BEGIN_SRC
-machine anthropic/TheConductor login apikey password sk-ant-...
-machine openai/TheConductor    login apikey password sk-proj-...
+machine anthropic/TheAccountant login apikey password sk-ant-...
+machine openai/TheAccountant    login apikey password sk-proj-...
 #+END_SRC
 
 Resolution:
@@ -193,7 +193,7 @@ Shells use:
 Buffer names reflect the actual shell:
 
 #+BEGIN_EXAMPLE
-*zsh:TheConductor*
+*zsh:TheAccountant*
 *bash:AnotherProject*
 #+END_EXAMPLE
 
