@@ -1,0 +1,296 @@
+#+TITLE: ai-project.el
+#+AUTHOR: Jeffrey Rush
+#+OPTIONS: toc:2 num:nil
+
+* ai-project.el — Project-aware AI coding workflows for Emacs
+
+=ai-project.el= extends Emacs’ built-in =project.el= with first-class support
+for AI coding agents such as Claude Code, Codex, and Anthropic's =ant= CLI.
+
+It provides:
+
+- Project-scoped API key management via =auth-source=
+- Seamless integration with =.dir-locals.el=
+- Dedicated commands for launching AI tools
+- Optional dispatcher for tool selection
+- Reusable terminal sessions with environment-aware isolation
+- A clean workflow alongside =project.el= and =Magit=
+
+This package is designed for developers who treat AI tools as part of their
+daily engineering environment—not as external utilities.
+
+---
+
+* Philosophy
+
+This package follows a simple principle:
+
+#+BEGIN_QUOTE
+Project context defines execution context.
+#+END_QUOTE
+
+Each project can define:
+
+- which API keys to use
+- which models or flags to pass
+- how AI tools behave in that context
+
+This aligns naturally with:
+
+- =project.el= (project scoping)
+- =.dir-locals.el= (per-project configuration)
+- =auth-source= (secure secret storage)
+
+---
+
+* Features
+
+- 🔐 Per-project API keys (Anthropic + OpenAI)
+- 🧠 Project-aware launching of Claude, Codex, and ant
+- 🖥️ Shells rooted at project directories with correct environment
+- 🔁 Reuse of running sessions when environment matches
+- ⚙️ Customizable command-line arguments per project
+- 🔍 Integration with =project-switch-commands=
+- 🧰 Optional dispatcher command for tool selection
+
+---
+
+* Requirements
+
+- Emacs 29.1+
+- =project.el= (built-in)
+- =auth-source= (built-in)
+- =vterm= (recommended)
+
+Install =vterm= if needed:
+
+#+BEGIN_SRC emacs-lisp
+(use-package vterm :ensure t)
+#+END_SRC
+
+---
+
+* Installation
+
+** Using straight.el
+
+#+BEGIN_SRC emacs-lisp
+(use-package ai-project
+  :straight (:host github :repo "xanalogica/ai-project.el")
+  :config
+  (ai-project-mode 1)
+  (ai-project-install-default-switch-commands))
+#+END_SRC
+
+** Manual install
+
+Clone the repo:
+
+#+BEGIN_SRC bash
+git clone https://github.com/xanalogica/ai-project.el
+#+END_SRC
+
+Add to your load path:
+
+#+BEGIN_SRC emacs-lisp
+(add-to-list 'load-path "/path/to/ai-project.el")
+(require 'ai-project)
+
+(ai-project-mode 1)
+#+END_SRC
+
+---
+
+* Basic Usage
+
+Within any project:
+
+| Command | Description |
+|--------|-------------|
+| =M-x ai-project-shell= | Open project shell |
+| =M-x ai-project-claude= | Launch Claude Code |
+| =M-x ai-project-codex= | Launch Codex |
+| =M-x ai-project-ant= | Launch Anthropic CLI |
+| =M-x ai-project-launch= | Dispatcher (choose tool) |
+
+Project keybindings (default):
+
+| Key | Action |
+|-----|--------|
+| =C-x p t= | Shell |
+| =C-x p C= | Claude |
+| =C-x p X= | Codex |
+| =C-x p A= | ant |
+| =C-x p L= | Dispatcher |
+
+---
+
+* Per-project Configuration
+
+Use =.dir-locals.el= to define project identity and tool behavior.
+
+Example:
+
+#+BEGIN_SRC emacs-lisp
+((nil . ((ai-project-llm-project-key . "TheConductor")
+         (ai-project-claude-args . "--model claude-sonnet-4")
+         (ai-project-codex-args . "--model gpt-5-codex"))))
+#+END_SRC
+
+These variables are marked safe and will not trigger Emacs warnings.
+
+---
+
+* API Keys via authinfo.gpg
+
+Store secrets in:
+
+#+BEGIN_SRC
+~/.authinfo.gpg
+#+END_SRC
+
+Example:
+
+#+BEGIN_SRC
+machine anthropic/TheConductor login apikey password sk-ant-...
+machine openai/TheConductor    login apikey password sk-proj-...
+#+END_SRC
+
+Resolution:
+
+- Claude / ant → require Anthropic key
+- Codex → require OpenAI key
+- Shell → uses keys if available, but does not require them
+
+---
+
+* Session Reuse
+
+ai-project automatically reuses running sessions when:
+
+- tool matches (Claude, Codex, shell, etc.)
+- project key matches
+- command-line args match
+- environment matches
+
+Otherwise, a fresh session is started.
+
+This allows:
+
+- persistent Claude/Codex sessions
+- stable interactive workflows
+- automatic restart when configuration changes
+
+---
+
+* Shell Behavior
+
+Shells use:
+
+1. =(getenv "SHELL")= if available
+2. fallback to =bash=
+
+Buffer names reflect the actual shell:
+
+#+BEGIN_EXAMPLE
+*zsh:TheConductor*
+*bash:AnotherProject*
+#+END_EXAMPLE
+
+---
+
+* Dispatcher
+
+The dispatcher provides a unified entry point:
+
+#+BEGIN_SRC
+M-x ai-project-launch
+#+END_SRC
+
+You can choose:
+
+- shell
+- claude
+- codex
+- ant
+
+This is useful for exploration or keyboard-driven workflows.
+
+---
+
+* Integration with project.el
+
+ai-project enhances:
+
+- =project-switch-commands=
+- =project-mode-line=
+- project-rooted execution
+
+Example configuration:
+
+#+BEGIN_SRC emacs-lisp
+(ai-project-install-default-switch-commands)
+#+END_SRC
+
+---
+
+* Magit Workflow
+
+Typical flow:
+
+1. =C-x p m= → open Magit
+2. create or switch branch
+3. =C-x p C= → launch Claude
+4. make changes in repo
+5. return to Magit
+6. review and commit
+
+This keeps:
+
+- AI as a working editor
+- human as the final authority
+
+---
+
+* Design Notes
+
+- Environment variables are applied at process creation time
+- Sessions are reused only when safe to do so
+- Project identity is explicit and portable
+- Secrets are never stored in project files
+
+---
+
+* Roadmap Ideas
+
+- restart command for active sessions
+- integration with tramp/remote projects
+- model selection UI
+- tool chaining workflows
+- deeper Magit integration
+
+---
+
+* License
+
+MIT License
+
+---
+
+* Repository
+
+https://github.com/xanalogica/ai-project.el
+
+---
+
+* Version
+
+Current version: =0.2.0=
+
+---
+
+* Final Thought
+
+#+BEGIN_QUOTE
+This package treats AI tools as part of the project—not external to it.
+#+END_QUOTE

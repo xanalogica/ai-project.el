@@ -1,0 +1,31 @@
+# --- Emacs ---
+*~
+\#*\#
+.\#*
+*.elc
+*.eln
+auto-save-list/
+tramp
+.eshell/
+.history
+emacs-lock
+
+# Backup / autosave files
+*.bak
+*.tmp
+
+# Org-mode tangling / exports
+*.org~
+*.org.bak
+
+# Project-specific local config (optional)
+.dir-locals-2.el
+
+# Straight.el / package build artifacts (if you ever test locally)
+.elpa/
+straight/
+build/
+
+# OS junk
+.DS_Store
+Thumbs.db
