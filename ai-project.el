@@ -2,7 +2,7 @@
 
 ;; Author: Jeffrey Rush
 ;; Maintainer: Jeffrey Rush
-;; Version: 0.2.0
+;; Version: 0.2.1
 ;; Package-Requires: ((emacs "29.1") (vterm "0.0"))
 ;; Keywords: project, tools, ai, convenience
 ;; URL: https://github.com/xanalogica/ai-project.el
