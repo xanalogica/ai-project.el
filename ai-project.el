@@ -19,7 +19,7 @@
 ;; - per-project credentials via auth-source / ~/.authinfo.gpg
 ;; - safe local variables for .dir-locals.el
 ;; - dedicated launch commands plus a dispatcher
-;; - vterm buffer reuse when tool + project + effective command signature match
+;; - vterm buffer reuse when tool + directory + effective command/env match
 ;;
 ;; Expected .dir-locals.el variables:
 ;;
@@ -40,7 +40,6 @@
 
 ;;; Code:
 
-;; Optional dependency: vterm (silence warnings by Emacs native compiler)
 (declare-function vterm "vterm" (&optional buffer-name))
 (declare-function vterm-send-string "vterm" (string))
 (declare-function vterm-send-return "vterm" ())
@@ -77,7 +76,7 @@ If nil, use (getenv \"SHELL\") when available, otherwise fall back to \"bash\"."
 
 (defcustom ai-project-vterm-buffer-format "*%s:%s*"
   "Format string for vterm buffer names.
-Arguments are TOOL-NAME and PROJECT-KEY."
+Arguments are TOOL-NAME and DIRECTORY-LABEL."
   :type 'string)
 
 (defcustom ai-project-key-fallback-to-directory-name t
@@ -142,21 +141,35 @@ Signal an error if current buffer is not inside a project."
         (unless (string-empty-p value)
           value)))))
 
-(defun ai-project-key ()
-  "Return the logical project key for the current project.
-Preference order:
-1. `ai-project-llm-project-key' from .dir-locals.el
-2. contents of project key file
-3. project directory name, if enabled"
-  (let ((root (ai-project-root)))
-    (or (and (stringp ai-project-llm-project-key)
-             (not (string-empty-p ai-project-llm-project-key))
-             ai-project-llm-project-key)
-        (ai-project--key-from-file root)
+(defun ai-project--dir-local-settings (dir)
+  "Return relevant AI dir-local settings for DIR as an alist."
+  (with-temp-buffer
+    (setq default-directory (file-name-as-directory (expand-file-name dir)))
+    (delay-mode-hooks (fundamental-mode))
+    (hack-dir-local-variables-non-file-buffer)
+    `((ai-project-llm-project-key . ,ai-project-llm-project-key)
+      (ai-project-claude-args . ,ai-project-claude-args)
+      (ai-project-codex-args . ,ai-project-codex-args)
+      (ai-project-ant-args . ,ai-project-ant-args))))
+
+(defun ai-project--project-key-for-dir (dir)
+  "Return the logical project key for DIR."
+  (let* ((dir (file-name-as-directory (expand-file-name dir)))
+         (settings (ai-project--dir-local-settings dir))
+         (local-key (alist-get 'ai-project-llm-project-key settings))
+         (file-key (ai-project--key-from-file dir)))
+    (or (and (stringp local-key)
+             (not (string-empty-p local-key))
+             local-key)
+        file-key
         (and ai-project-key-fallback-to-directory-name
              (file-name-nondirectory
-              (directory-file-name root)))
-        (error "No AI project key defined for %s" root))))
+              (directory-file-name dir)))
+        (error "No AI project key defined for %s" dir))))
+
+(defun ai-project-key ()
+  "Return the logical project key for the current project."
+  (ai-project--project-key-for-dir (ai-project-root)))
 
 (defun ai-project--authinfo-secret-maybe (host)
   "Return the secret associated with HOST from auth-source, or nil."
@@ -170,55 +183,63 @@ Preference order:
           (funcall secret)
         secret))))
 
-(defun ai-project-anthropic-key-maybe ()
-  "Return Anthropic API key for current project, or nil."
+(defun ai-project-anthropic-key-maybe (&optional dir)
+  "Return Anthropic API key for DIR/current project, or nil."
   (ai-project--authinfo-secret-maybe
-   (format "anthropic/%s" (ai-project-key))))
+   (format "anthropic/%s"
+           (ai-project--project-key-for-dir (or dir (ai-project-root))))))
 
-(defun ai-project-openai-key-maybe ()
-  "Return OpenAI API key for current project, or nil."
+(defun ai-project-openai-key-maybe (&optional dir)
+  "Return OpenAI API key for DIR/current project, or nil."
   (ai-project--authinfo-secret-maybe
-   (format "openai/%s" (ai-project-key))))
+   (format "openai/%s"
+           (ai-project--project-key-for-dir (or dir (ai-project-root))))))
 
-(defun ai-project-require-anthropic-key ()
-  "Return Anthropic API key for current project or signal an error."
-  (or (ai-project-anthropic-key-maybe)
-      (error "No Anthropic API key found for project %s" (ai-project-key))))
+(defun ai-project-require-anthropic-key (&optional dir)
+  "Return Anthropic API key for DIR/current project or signal an error."
+  (or (ai-project-anthropic-key-maybe dir)
+      (error "No Anthropic API key found for project %s"
+             (ai-project--project-key-for-dir (or dir (ai-project-root))))))
 
-(defun ai-project-require-openai-key ()
-  "Return OpenAI API key for current project or signal an error."
-  (or (ai-project-openai-key-maybe)
-      (error "No OpenAI API key found for project %s" (ai-project-key))))
+(defun ai-project-require-openai-key (&optional dir)
+  "Return OpenAI API key for DIR/current project or signal an error."
+  (or (ai-project-openai-key-maybe dir)
+      (error "No OpenAI API key found for project %s"
+             (ai-project--project-key-for-dir (or dir (ai-project-root))))))
 
-(defun ai-project-shell-env ()
-  "Return environment for a plain project shell.
+(defun ai-project-shell-env (&optional dir)
+  "Return environment for a plain project shell in DIR/current project.
 Missing AI keys are ignored."
-  (let ((env nil)
-        (key (ai-project-key)))
-    (when-let ((anthropic (ai-project-anthropic-key-maybe)))
+  (let* ((dir (or dir (ai-project-root)))
+         (env nil)
+         (key (ai-project--project-key-for-dir dir)))
+    (when-let ((anthropic (ai-project-anthropic-key-maybe dir)))
       (push (format "ANTHROPIC_API_KEY=%s" anthropic) env))
-    (when-let ((openai (ai-project-openai-key-maybe)))
+    (when-let ((openai (ai-project-openai-key-maybe dir)))
       (push (format "OPENAI_API_KEY=%s" openai) env))
     (push (format "LLM_PROJECT_NAME=%s" key) env)
     (nreverse env)))
 
-(defun ai-project-claude-env ()
-  "Return environment for Claude Code.
+(defun ai-project-claude-env (&optional dir)
+  "Return environment for Claude Code in DIR/current project.
 Require an Anthropic API key."
-  (list (format "ANTHROPIC_API_KEY=%s" (ai-project-require-anthropic-key))
-        (format "LLM_PROJECT_NAME=%s" (ai-project-key))))
+  (let ((dir (or dir (ai-project-root))))
+    (list (format "ANTHROPIC_API_KEY=%s" (ai-project-require-anthropic-key dir))
+          (format "LLM_PROJECT_NAME=%s" (ai-project--project-key-for-dir dir)))))
 
-(defun ai-project-ant-env ()
-  "Return environment for Anthropic ant.
+(defun ai-project-ant-env (&optional dir)
+  "Return environment for Anthropic ant in DIR/current project.
 Require an Anthropic API key."
-  (list (format "ANTHROPIC_API_KEY=%s" (ai-project-require-anthropic-key))
-        (format "LLM_PROJECT_NAME=%s" (ai-project-key))))
+  (let ((dir (or dir (ai-project-root))))
+    (list (format "ANTHROPIC_API_KEY=%s" (ai-project-require-anthropic-key dir))
+          (format "LLM_PROJECT_NAME=%s" (ai-project--project-key-for-dir dir)))))
 
-(defun ai-project-codex-env ()
-  "Return environment for Codex.
+(defun ai-project-codex-env (&optional dir)
+  "Return environment for Codex in DIR/current project.
 Require an OpenAI API key."
-  (list (format "OPENAI_API_KEY=%s" (ai-project-require-openai-key))
-        (format "LLM_PROJECT_NAME=%s" (ai-project-key))))
+  (let ((dir (or dir (ai-project-root))))
+    (list (format "OPENAI_API_KEY=%s" (ai-project-require-openai-key dir))
+          (format "LLM_PROJECT_NAME=%s" (ai-project--project-key-for-dir dir)))))
 
 (defun ai-project--resolve-shell-command ()
   "Return the shell command to use for project shells."
@@ -229,36 +250,56 @@ Require an OpenAI API key."
          ((executable-find "bash") "bash")
          (t (error "No suitable shell found"))))))
 
-(defun ai-project--tool-display-name (tool command)
-  "Return display name for TOOL and COMMAND.
-Shells reflect actual shell basename."
-  (if (eq tool 'shell)
-      (file-name-nondirectory command)
-    (symbol-name tool)))
-
 (defun ai-project--command-with-args (program args)
   "Return PROGRAM plus optional ARGS as a shell command string."
   (if (and (stringp args) (not (string-empty-p args)))
       (format "%s %s" program args)
     program))
 
+(defun ai-project--tool-command-for-dir (tool dir)
+  "Return the CLI command string for TOOL in DIR, or nil for plain shell."
+  (let* ((settings (ai-project--dir-local-settings dir))
+         (claude-args (alist-get 'ai-project-claude-args settings))
+         (codex-args (alist-get 'ai-project-codex-args settings))
+         (ant-args (alist-get 'ai-project-ant-args settings)))
+    (pcase tool
+      ('shell nil)
+      ('claude (ai-project--command-with-args "claude" claude-args))
+      ('codex  (ai-project--command-with-args "codex" codex-args))
+      ('ant    (ai-project--command-with-args "ant" ant-args))
+      (_ (error "Unknown ai-project tool: %S" tool)))))
+
+(defun ai-project--tool-env-for-dir (tool dir)
+  "Return startup environment for TOOL in DIR."
+  (pcase tool
+    ('shell  (ai-project-shell-env dir))
+    ('claude (ai-project-claude-env dir))
+    ('codex  (ai-project-codex-env dir))
+    ('ant    (ai-project-ant-env dir))
+    (_ (error "Unknown ai-project tool: %S" tool))))
+
+(defun ai-project--tool-display-name (tool)
+  "Return display name for TOOL."
+  (symbol-name tool))
+
+(defun ai-project--buffer-name-for-dir (tool dir)
+  "Return a stable vterm buffer name for TOOL rooted at DIR."
+  (format ai-project-vterm-buffer-format
+          (ai-project--tool-display-name tool)
+          (file-name-nondirectory
+           (directory-file-name (file-name-as-directory dir)))))
+
 (defun ai-project--normalize-env (env)
   "Return ENV sorted for stable comparison."
   (sort (copy-sequence env) #'string<))
 
-(defun ai-project--launch-signature (tool command env)
-  "Return a stable signature string for TOOL, COMMAND, and ENV."
+(defun ai-project--launch-signature (tool dir command env)
+  "Return a stable signature string for TOOL, DIR, COMMAND, and ENV."
   (prin1-to-string
    (list :tool tool
-         :project-key (ai-project-key)
+         :dir (file-name-as-directory (expand-file-name dir))
          :command command
          :env (ai-project--normalize-env env))))
-
-(defun ai-project--buffer-name (tool command)
-  "Return vterm buffer name for TOOL and COMMAND in current project."
-  (format ai-project-vterm-buffer-format
-          (ai-project--tool-display-name tool command)
-          (ai-project-key)))
 
 (defun ai-project--live-process-p (buffer)
   "Return non-nil if BUFFER has a live process."
@@ -276,20 +317,26 @@ Shells reflect actual shell basename."
   (when (buffer-live-p buffer)
     (kill-buffer buffer)))
 
-(defun ai-project-vterm-command (tool command &optional extra-env)
-  "Run COMMAND for TOOL in a project-rooted vterm buffer.
-TOOL is a symbol such as `shell', `claude', `codex', or `ant'.
-EXTRA-ENV is a list of KEY=VALUE strings prepended to `process-environment'.
+(defun ai-project--apply-dir-locals-for-buffer (dir)
+  "Apply directory local variables for DIR to the current non-file buffer."
+  (setq-local default-directory (file-name-as-directory (expand-file-name dir)))
+  (hack-dir-local-variables-non-file-buffer))
 
-If `ai-project-reuse-live-buffers' is non-nil, reuse a live matching buffer
-when the effective tool, project, command, and environment signature match.
-Otherwise recreate the buffer."
+(defun ai-project-vterm-in-dir (dir tool &optional command extra-env)
+  "Open a vterm in DIR for TOOL.
+
+If TOOL is `shell', open a plain interactive shell.
+Otherwise open a shell and send COMMAND into it.
+
+EXTRA-ENV is prepended to `process-environment' for the spawned shell."
   (unless (fboundp 'vterm)
     (error "vterm is not installed"))
-  (let* ((default-directory (ai-project-root))
-         (process-environment (append extra-env process-environment))
-         (bufname (ai-project--buffer-name tool command))
-         (signature (ai-project--launch-signature tool command extra-env))
+  (let* ((dir (file-name-as-directory (expand-file-name dir)))
+         (shell (ai-project--resolve-shell-command))
+         (command (or command (ai-project--tool-command-for-dir tool dir)))
+         (extra-env (or extra-env (ai-project--tool-env-for-dir tool dir)))
+         (bufname (ai-project--buffer-name-for-dir tool dir))
+         (signature (ai-project--launch-signature tool dir command extra-env))
          (existing (get-buffer bufname)))
     (cond
      ((and ai-project-reuse-live-buffers
@@ -299,56 +346,67 @@ Otherwise recreate the buffer."
      (t
       (when existing
         (ai-project--kill-buffer-if-live existing))
-      ;; 🔑 IMPORTANT: let vterm start the shell itself
-      (let ((vterm-shell command))
+      (let ((default-directory dir)
+            (process-environment (append extra-env process-environment))
+            (vterm-shell shell))
         (vterm bufname))
       (with-current-buffer bufname
+        (ai-project--apply-dir-locals-for-buffer dir)
         (setq-local ai-project--signature signature)
         (setq-local ai-project--tool tool)
-        (setq-local ai-project--project-key (ai-project-key))
+        (setq-local ai-project--project-root dir)
         (setq-local ai-project--command command))
-
-      ;; 🔑 ONLY send command for non-shell tools
       (unless (eq tool 'shell)
-        (vterm-send-string command)
-        (vterm-send-return))))))
+        (with-current-buffer bufname
+          (when (and (stringp command) (not (string-empty-p command)))
+            (vterm-send-string command)
+            (vterm-send-return))))
+      (pop-to-buffer bufname)))))
+
+(defun ai-project-vterm-in-project (tool &optional command extra-env)
+  "Open a vterm for TOOL in the current project root."
+  (ai-project-vterm-in-dir (ai-project-root) tool command extra-env))
+
+(defun ai-project-bootstrap-shell (dir)
+  "Open a shell exactly in DIR, even if DIR is not an Emacs project root."
+  (interactive "DDirectory: ")
+  (ai-project-vterm-in-dir dir 'shell nil (ai-project-shell-env dir)))
 
 (defun ai-project-shell ()
-  "Launch a plain shell in the current project.
-Missing AI variables are ignored."
+  "Launch a plain shell in the current project."
   (interactive)
-  (let ((shell (ai-project--resolve-shell-command)))
-    (ai-project-vterm-command
-     'shell
-     shell
-     (ai-project-shell-env))))
+  (let ((dir (ai-project-root)))
+    (ai-project-vterm-in-dir dir 'shell nil (ai-project-shell-env dir))))
 
 (defun ai-project-claude ()
-  "Launch Claude Code in the current project.
-Signal an error if no Anthropic API key is declared for this project."
+  "Launch Claude Code in the current project."
   (interactive)
-  (ai-project-vterm-command
-   'claude
-   (ai-project--command-with-args "claude" ai-project-claude-args)
-   (ai-project-claude-env)))
+  (let ((dir (ai-project-root)))
+    (ai-project-vterm-in-dir
+     dir
+     'claude
+     (ai-project--tool-command-for-dir 'claude dir)
+     (ai-project-claude-env dir))))
 
 (defun ai-project-codex ()
-  "Launch Codex in the current project.
-Signal an error if no OpenAI API key is declared for this project."
+  "Launch Codex in the current project."
   (interactive)
-  (ai-project-vterm-command
-   'codex
-   (ai-project--command-with-args "codex" ai-project-codex-args)
-   (ai-project-codex-env)))
+  (let ((dir (ai-project-root)))
+    (ai-project-vterm-in-dir
+     dir
+     'codex
+     (ai-project--tool-command-for-dir 'codex dir)
+     (ai-project-codex-env dir))))
 
 (defun ai-project-ant ()
-  "Launch Anthropic ant in the current project.
-Signal an error if no Anthropic API key is declared for this project."
+  "Launch Anthropic ant in the current project."
   (interactive)
-  (ai-project-vterm-command
-   'ant
-   (ai-project--command-with-args "ant" ai-project-ant-args)
-   (ai-project-ant-env)))
+  (let ((dir (ai-project-root)))
+    (ai-project-vterm-in-dir
+     dir
+     'ant
+     (ai-project--tool-command-for-dir 'ant dir)
+     (ai-project-ant-env dir))))
 
 (defun ai-project-launch (tool)
   "Dispatch to one of the configured AI project tools."
@@ -421,6 +479,7 @@ Signal an error if no Anthropic API key is declared for this project."
     (project-search "iGrep")
     (project-find-regexp "Grep")
     (ai-project-shell "Shell")
+    (ai-project-ant "Ant")
     (ai-project-claude "Claude")
     (ai-project-codex "Codex")
     (ai-project-launch "AI launcher")))
